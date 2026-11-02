@@ -1,9 +1,10 @@
 # Web Develop Nav
 
-以 **Notion 資料庫當後台**的前端工具導航站。在 Notion 新增、修改網站資料後，網站會自動同步更新。
+以 **Notion 資料庫當後台**的前端工具導航站。網站是純靜態（SSG），在 build 時讀取 Notion；Notion 修改後會自動重新 build。
 
 - 框架：Astro 7 + React 19 + Tailwind CSS v4 + [shadcn/ui](https://ui.shadcn.com)（base-nova / Base UI）
-- 版面參考：[WebNav](https://webnav.codefe.top/)（側邊分類 + 卡片網格）、[M-Nav](https://nav.busyhe.com/)（Notion 資料來源）
+- 版面參考：[WebNav](https://webnav.codefe.top/)（左側分類 + 卡片網格）；Notion 導航站參考：[M-Nav](https://nav.busyhe.com/)
+- 部署：Cloudflare Pages（靜態網站 + 一個接收 Notion webhook 的 Pages Function）
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshot-dark.png" />
@@ -13,36 +14,43 @@
 ## 功能
 
 - 📚 **Notion 即後台**：使用官方 Notion API 讀取資料庫，支援單選 / 多選分類
-- 🔄 **自動同步**：頁面快取 + stale-while-revalidate，並可用 Notion webhook 即時更新
+- 🔄 **自動重新 build**：Notion 有修改時收到 webhook，**等 10 分鐘，期間有新修改就重新計時**，之後才重新 build
 - 🧭 **分類側邊欄**：順序與顏色跟 Notion 選項一致，捲動時自動標示目前分類；手機版為抽屜選單
 - 🔍 **即時搜尋**：比對名稱、描述、網域與分類；按 `/` 或 `Ctrl / ⌘ + K` 聚焦
-- 🖼️ **自動圖示**：`icon link` → Notion 頁面圖示 → 網站 favicon → 文字頭像，依序備援
-- 🌗 深色模式（淺色 / 深色 / 跟隨系統）、RWD、無障礙標記
+- 🖼️ **圖示**：`icon link` → Notion 頁面圖示 → 網站 favicon → 文字頭像，依序備援；Notion 上傳的圖示會在 build 時下載進網站
+- 🌗 深色模式（淺色 / 深色 / 跟隨系統）、RWD
+
+## 架構
+
+```mermaid
+flowchart LR
+  N[(Notion 資料庫)] -- 資料有修改 --> W["Pages Function<br/>/api/notion-webhook<br/>驗證簽章"]
+  W -- workflow_dispatch --> G["GitHub Actions<br/>等 10 分鐘<br/>有新通知就重新計時"]
+  G -- deploy hook --> C["Cloudflare Pages build<br/>讀取 Notion → 產生靜態網站"]
+  C -- 讀取 --> N
+```
+
+- Notion 修改後的反映時間 ≈ Notion 送出通知（官方：通常 1 分鐘內，最慢 5 分鐘）＋ 10 分鐘等待 ＋ build 時間。
+- build 時讀取 Notion 失敗（例如 token 失效、Notion 故障）會讓 build 失敗，網站繼續顯示上一版。
+- 用量：每次「等 10 分鐘」結束只觸發 1 次 build（Cloudflare Pages 免費每月 500 次）；webhook 請求計入 Workers 免費每天 10 萬次；public repo 的 GitHub Actions 免費。
 
 ## Notion 資料庫欄位
 
-| 欄位        | Notion 類型   | 必填 | 說明                                                                  |
-| ----------- | ------------- | ---- | --------------------------------------------------------------------- |
-| `Name`      | 標題（Title） | ✅   | 網站名稱（標題欄位名稱不限）                                          |
-| `link`      | URL           | ✅   | 網站連結，可省略 `https://`                                           |
-| `Desc`      | 文字          |      | 網站描述                                                              |
-| `Type`      | 多選 / 單選   |      | 分類。側邊欄順序 = 選項排列順序；選項名稱開頭加 emoji（如 `🎨 CSS相關`）會當成分類圖示 |
-| `icon link` | URL           |      | 自訂圖示網址；留空會自動抓 favicon                                    |
-| `Sort`      | 數字          |      | （選填）同分類內排序，數字小的在前；沒有此欄位時依建立時間排序        |
+| 欄位        | Notion 類型   | 說明                                                                  |
+| ----------- | ------------- | --------------------------------------------------------------------- |
+| `Name`      | 標題（Title） | 網站名稱。**沒有名字的資料不顯示**                                    |
+| `link`      | URL           | 網站連結，可省略 `https://`。**沒有連結也會顯示**，只是卡片不能點     |
+| `Desc`      | 文字          | 描述，可空白                                                          |
+| `Type`      | 多選 / 單選   | 分類，可空白（歸到「未分類」）。側邊欄順序 = 選項順序；選項名稱開頭加 emoji（如 `🎨 CSS相關`）會當成分類圖示 |
+| `icon link` | URL           | 自訂圖示網址，可空白                                                  |
+| `Sort`      | 數字          | （選填）同分類內排序，數字小的在前；沒有此欄位時依建立時間排序        |
 
-> 欄位名稱不分大小寫，也可以在 [`src/config/site.ts`](src/config/site.ts) 的 `notionPropertyAliases` 加入自己的欄位名稱。
+- 資料庫少了任何欄位都不會報錯，該欄位當作空白處理。
+- 欄位名稱不分大小寫，可在 [`src/config/site.ts`](src/config/site.ts) 的 `notionPropertyAliases` 加入自己的欄位名稱。
 
-## 快速開始
+## 本機開發
 
-### 1. 建立 Notion integration 並分享資料庫
-
-1. 到 [Notion Integrations](https://www.notion.so/profile/integrations) 建立 **Internal integration**，複製 **Internal Integration Secret**（即 `NOTION_TOKEN`）。
-2. 打開你的資料庫 → 右上角 **⋯ → Connections** → 加入剛建立的 integration。
-3. 複製資料庫網址（`https://www.notion.so/<workspace>/<資料庫ID>?v=...`），整串貼到 `NOTION_DATABASE_ID` 即可。
-
-### 2. 本機開發
-
-需求：Node.js ≥ 22、pnpm 10。
+需求：Node.js ≥ 22.23.4、pnpm 10。
 
 ```bash
 pnpm install
@@ -50,102 +58,67 @@ cp .env.example .env   # 填入 NOTION_TOKEN 與 NOTION_DATABASE_ID
 pnpm dev               # http://localhost:4321
 ```
 
-> 沒有設定 Notion 時會顯示範例資料，方便先調整畫面。
+- `pnpm dev` 沒有設定 Notion 時會顯示範例資料，方便先調整畫面。
+- `pnpm build` 一定要能讀到 Notion，否則 build 失敗。
 
-## 環境變數
+## 部署到 Cloudflare Pages
 
-所有變數都列在 [`.env.example`](.env.example)，皆於**執行階段**讀取（不會打包進前端）。
+所有環境變數都列在 [`.env.example`](.env.example)。
 
-| 變數                    | 說明                                                                  |
-| ----------------------- | --------------------------------------------------------------------- |
-| `NOTION_TOKEN`          | Notion integration secret                                             |
-| `NOTION_DATABASE_ID`    | 資料庫 ID 或網址（也接受 data source ID）                             |
-| `CACHE_MAX_AGE`         | 頁面快取秒數，預設 `300`；Notion 修改後最慢約這段時間反映。`0` = 不快取 |
-| `NOTION_WEBHOOK_SECRET` | （選填）Notion webhook 的 verification token，設定後可即時更新        |
-| `REVALIDATE_SECRET`     | （選填）手動觸發更新 `/api/revalidate` 用的密鑰                       |
+### 1. Notion integration
 
-## Notion 更新如何同步到網站
+1. 到 [Notion Integrations](https://www.notion.so/profile/integrations) 建立 **Internal integration**，複製 **Internal Integration Secret**。
+2. 打開資料庫 → 右上角 **⋯ → Connections** → 加入這個 integration。
 
-```mermaid
-flowchart LR
-  N[(Notion 資料庫)] -- 1. 讀取 --> P["/ 首頁（SSR）"]
-  P -- 2. 快取 CACHE_MAX_AGE 秒<br/>過期後背景重新抓取 --> C[(頁面快取)]
-  N -. 3. 資料變更 webhook .-> R["/api/revalidate"]
-  R -- 4. 驗證簽章後清除快取 --> C
-```
+### 2. 建立 Cloudflare Pages 專案
 
-1. 首頁在伺服器端讀取 Notion，並以 [Astro route caching](https://docs.astro.build/en/guides/caching/) 快取 `CACHE_MAX_AGE` 秒。
-2. 快取過期後採 stale-while-revalidate：先回應舊頁面、背景重新讀取 Notion，訪客不會等待。
-3. **即時更新（選用）**：設定 Notion webhook，資料一變更就清除快取。
-4. 讀取 Notion 失敗時頁面會顯示錯誤提示（HTTP 503），且不會被快取。
+1. Cloudflare → **Workers & Pages** → 建立 Pages 專案並連結這個 GitHub repo（Git 整合）。
+2. Production branch：`main`；Build command：`pnpm build`；Build output directory：`dist`。
+3. **Settings → Variables and Secrets** 加入：`NOTION_TOKEN`、`NOTION_DATABASE_ID`、`PNPM_VERSION=10.28.0`。
 
-### 設定 Notion webhook（即時更新）
+### 3. Deploy hook 與 GitHub Actions
 
-1. 先完成部署，確定 `https://你的網域/api/revalidate` 可以連線。
-2. Notion integration 設定頁 → **Webhooks** → **Create a subscription**：
-   - URL：`https://你的網域/api/revalidate`
-   - 事件：勾選 `Page`（created / properties updated / deleted / undeleted）與 `Data source` 的 schema updated（調整分類選項時）。
-3. Notion 會送出一次驗證請求，到伺服器 log（Vercel：Project → Logs）找到
-   `收到 Notion webhook verification_token：secret_xxx`，把 token 貼回 Notion 按 **Verify**。
-4. 將同一個 token 設為環境變數 `NOTION_WEBHOOK_SECRET` 並重新部署。之後的事件都會驗證 `X-Notion-Signature` 簽章。
+1. Pages 專案 **Settings → Builds → Add deploy hook**，分支選 `main`，複製網址（等同密碼，不要公開）。
+2. GitHub repo → **Settings → Secrets and variables → Actions** 新增 secret：`CLOUDFLARE_DEPLOY_HOOK_URL` = 上一步的網址。
+3. 建立 GitHub [fine-grained token](https://github.com/settings/personal-access-tokens)：只授權這個 repo，權限 **Actions: Read and write**。
+4. 回到 Cloudflare Pages 加入：`GITHUB_DISPATCH_TOKEN`（上一步的 token）、`GITHUB_DISPATCH_REPO`（例如 `keon981/web-develop-nav`）。
 
-### 手動觸發更新
+> workflow 檔 `.github/workflows/notion-rebuild.yml` 必須在 repo 的預設分支（`main`）上才能被觸發。
 
-設定 `REVALIDATE_SECRET` 後，可從 CI、排程或 Notion 自動化（Send webhook）呼叫：
+### 4. Notion webhook
 
-```bash
-curl -X POST -H "Authorization: Bearer <REVALIDATE_SECRET>" https://你的網域/api/revalidate
-```
-
-## 部署
-
-建置時會自動選擇 adapter（見 [`astro.config.mjs`](astro.config.mjs)）：
-
-| 環境                       | Adapter                 | 快取                                     |
-| -------------------------- | ----------------------- | ---------------------------------------- |
-| Vercel（偵測到 `VERCEL`）  | `@astrojs/vercel`       | Vercel CDN（`Vercel-Cache-Tag`）         |
-| 其他（本機 / Docker / VPS）| `@astrojs/node` standalone | 記憶體快取（單一程序內有效）          |
-
-### Vercel（推薦）
-
-1. 在 Vercel 匯入此 repo（Framework 會自動偵測為 Astro）。
-2. 於 **Settings → Environment Variables** 設定 `NOTION_TOKEN`、`NOTION_DATABASE_ID`（以及選填變數）。
-3. 部署完成後，依上方步驟設定 Notion webhook。
-
-### Node（自架）
-
-```bash
-pnpm build
-HOST=0.0.0.0 PORT=4321 NOTION_TOKEN=... NOTION_DATABASE_ID=... node ./dist/server/entry.mjs
-```
-
-> 記憶體快取只在單一程序內有效，若開多個實例，`/api/revalidate` 只會清除收到請求的那一個。
+1. Notion integration 設定頁 → **Webhooks** → **Create a subscription**：
+   - URL：`https://<你的專案>.pages.dev/api/notion-webhook`
+   - 事件：勾選 Page 的 created / properties updated / deleted / undeleted，以及 Data source 的 schema updated（調整分類選項時）。
+2. Notion 會送出一次驗證請求。到 Cloudflare **Workers & Pages → 專案 → 部署的 View details → Functions** 查看 log，找到
+   `收到 Notion verification_token：...`，把 token 貼回 Notion 按 **Verify**。
+3. 把同一個 token 設為 Cloudflare Pages 的 `NOTION_WEBHOOK_SECRET`，再重新部署一次讓設定生效。
 
 ## 指令
 
-| 指令             | 說明                          |
-| ---------------- | ----------------------------- |
-| `pnpm dev`       | 開發伺服器                    |
-| `pnpm build`     | 正式建置                      |
-| `pnpm preview`   | 預覽建置結果（Node adapter）  |
-| `pnpm test`      | 單元測試（Vitest）            |
-| `pnpm lint`      | ESLint                        |
-| `pnpm typecheck` | `astro check` 型別檢查        |
-| `pnpm format`    | Prettier 格式化               |
+| 指令             | 說明                         |
+| ---------------- | ---------------------------- |
+| `pnpm dev`       | 開發伺服器                   |
+| `pnpm build`     | 正式建置（輸出到 `dist/`）   |
+| `pnpm preview`   | 預覽建置結果                 |
+| `pnpm test`      | 單元測試（Vitest）           |
+| `pnpm lint`      | ESLint                       |
+| `pnpm typecheck` | `astro check` 型別檢查       |
+| `pnpm format`    | Prettier 格式化              |
 
 ## 專案結構
 
 ```text
+.github/workflows/notion-rebuild.yml   # 等 10 分鐘（重新計時）後呼叫 Cloudflare deploy hook
+functions/api/notion-webhook.ts        # Cloudflare Pages Function：接收 Notion webhook
 src/
 ├── config/site.ts          # 網站名稱、連結、favicon 服務、Notion 欄位對應
-├── pages/
-│   ├── index.astro         # 首頁：讀取資料 + 設定快取
-│   └── api/revalidate.ts   # 清除快取（Notion webhook / 手動）
+├── pages/index.astro       # 首頁：build 時讀取 Notion
 ├── lib/
-│   ├── notion.ts           # Notion API → 導航資料（欄位對應、排序、icon）
-│   ├── nav-data.ts         # 讀取入口（未設定時使用 demo-data.ts）
-│   ├── revalidate-auth.ts  # webhook 簽章 / 密鑰驗證
-│   └── search.ts、url.ts、category.ts …
+│   ├── notion.ts           # Notion API → 導航資料（欄位規則、排序、圖示）
+│   ├── nav-data.ts         # build 時的資料入口（下載 Notion 上傳的圖示、失敗即停止 build）
+│   ├── notion-webhook.ts   # webhook 驗證簽章、觸發 GitHub Actions
+│   └── demo-data.ts、search.ts、url.ts、category.ts …
 ├── components/
 │   ├── nav/                # 版面：側邊欄、header、搜尋、卡片、主題切換
 │   └── ui/                 # shadcn/ui 元件

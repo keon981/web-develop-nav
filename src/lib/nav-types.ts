@@ -15,9 +15,11 @@ export interface NavLink {
   /** Notion page id */
   id: string
   title: string
+  /** 描述，可為空字串 */
   description: string
-  /** 正規化後的 http(s) 連結 */
-  url: string
+  /** 正規化後的 http(s) 連結；沒有連結（或連結無效）時為 null，卡片不可點 */
+  url: string | null
+  /** 網域；沒有連結時為空字串 */
   hostname: string
   /** 圖片 icon（icon link 欄位或 Notion 頁面圖示），沒有時為 null */
   icon: string | null
@@ -43,8 +45,6 @@ export interface NavData {
   /** 不重複的網站數量 */
   total: number
   source: NavDataSource
-  /** 讀取資料的時間（ISO 字串） */
+  /** 產生資料的時間（ISO 字串），SSG 時即為 build 時間 */
   updatedAt: string
-  /** 讀取 Notion 失敗時的錯誤訊息 */
-  error?: string
 }

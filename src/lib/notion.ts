@@ -32,6 +32,12 @@ export interface NotionPropertyMap {
   order?: PropertySchema
 }
 
+/** 圖示來源；hosted = 存在 Notion 的檔案，網址約 1 小時後失效 */
+interface IconSource {
+  url: string
+  hosted: boolean
+}
+
 function findProperty(
   properties: Record<string, PropertySchema>,
   aliases: readonly string[],
@@ -50,7 +56,7 @@ function findProperty(
   return undefined
 }
 
-/** 依名稱 + 型別找出資料庫中對應的欄位 */
+/** 依名稱 + 型別找出資料庫中對應的欄位；找不到的欄位為 undefined，不會報錯 */
 export function resolveProperties(
   properties: Record<string, PropertySchema>
 ): NotionPropertyMap {
@@ -104,11 +110,17 @@ function readText(prop?: PageProperty): string {
   }
 }
 
-function readFileUrl(prop?: PageProperty): string {
-  if (prop?.type !== "files") return readText(prop)
-  const file = prop.files[0]
-  if (!file) return ""
-  return file.type === "external" ? file.external.url : file.file.url
+/** icon link 欄位：URL / 文字填的是外部網址；檔案欄位上傳的檔案存在 Notion */
+function readIconProperty(prop?: PageProperty): IconSource | null {
+  if (prop?.type === "files") {
+    const file = prop.files[0]
+    if (!file) return null
+    return file.type === "external"
+      ? { url: file.external.url, hosted: false }
+      : { url: file.file.url, hosted: true }
+  }
+  const url = readText(prop)
+  return url ? { url, hosted: false } : null
 }
 
 function readCategories(prop?: PageProperty): string[] {
@@ -128,40 +140,55 @@ function readNumber(prop?: PageProperty): number | null {
   return prop?.type === "number" ? prop.number : null
 }
 
-/** 頁面圖示：emoji 直接顯示；圖片類（外部連結 / 上傳檔案 / 自訂 emoji）回傳網址 */
+/** 頁面圖示：emoji 直接顯示；圖片類回傳網址，上傳檔案與自訂 emoji 存在 Notion */
 function readPageIcon(page: PageObjectResponse): {
   emoji: string | null
-  image: string | null
+  image: IconSource | null
 } {
   const icon = page.icon
   switch (icon?.type) {
     case "emoji":
       return { emoji: icon.emoji, image: null }
     case "external":
-      return { emoji: null, image: icon.external.url }
+      return { emoji: null, image: { url: icon.external.url, hosted: false } }
     case "file":
-      // 注意：Notion 上傳檔案的網址約 1 小時後過期，前端有 favicon 備援
-      return { emoji: null, image: icon.file.url }
+      return { emoji: null, image: { url: icon.file.url, hosted: true } }
     case "custom_emoji":
-      return { emoji: null, image: icon.custom_emoji.url }
+      return {
+        emoji: null,
+        image: { url: icon.custom_emoji.url, hosted: true },
+      }
     default:
       return { emoji: null, image: null }
   }
 }
 
-/** 把 Notion 頁面轉成導航連結；沒有標題或連結的資料列會被略過 */
+export interface NotionEntry {
+  link: NavLink
+  categories: string[]
+  order: number | null
+  /** icon 是 Notion 上傳的檔案，build 時需要下載 */
+  iconHosted: boolean
+}
+
+/**
+ * 把 Notion 頁面轉成導航連結。
+ * 規則：沒有名字不顯示；其他欄位空白沒關係；沒有連結也顯示（卡片不可點）。
+ */
 export function pageToEntry(
   page: PageObjectResponse,
   props: NotionPropertyMap
-): { link: NavLink; categories: string[]; order: number | null } | null {
+): NotionEntry | null {
   const title = readText(getProperty(page, props.title)).trim()
-  const url = normalizeUrl(readText(getProperty(page, props.url)))
-  if (!title || !url) return null
+  if (!title) return null
 
+  const url = normalizeUrl(readText(getProperty(page, props.url)))
   const pageIcon = readPageIcon(page)
-  const icon =
-    normalizeUrl(readFileUrl(getProperty(page, props.icon))) ??
-    normalizeUrl(pageIcon.image)
+  const icon = [readIconProperty(getProperty(page, props.icon)), pageIcon.image]
+    .map((source) =>
+      source ? { ...source, url: normalizeUrl(source.url) } : null
+    )
+    .find((source): source is IconSource => Boolean(source?.url))
 
   return {
     link: {
@@ -169,13 +196,20 @@ export function pageToEntry(
       title,
       description: readText(getProperty(page, props.description)).trim(),
       url,
-      hostname: getHostname(url),
-      icon,
+      hostname: url ? getHostname(url) : "",
+      icon: icon?.url ?? null,
       emoji: icon ? null : pageIcon.emoji,
     },
     categories: [...new Set(readCategories(getProperty(page, props.category)))],
     order: readNumber(getProperty(page, props.order)),
+    iconHosted: icon?.hosted ?? false,
   }
+}
+
+export interface NotionNavResult {
+  data: NavData
+  /** icon 存在 Notion（會過期）的連結 id */
+  hostedIconLinkIds: string[]
 }
 
 /**
@@ -186,23 +220,14 @@ export function buildNavData(
   dataSource: Pick<DataSourceObjectResponse, "properties">,
   pages: PageObjectResponse[],
   now = new Date()
-): NavData {
+): NotionNavResult {
   const props = resolveProperties(dataSource.properties)
-  if (!props.url) {
-    throw new Error(
-      `找不到連結欄位，請確認資料庫有 URL 型別的欄位，名稱為：${notionPropertyAliases.url.join(" / ")}`
-    )
-  }
 
   const entries = pages
     .map((page) => ({ page, entry: pageToEntry(page, props) }))
     .filter(
-      (
-        item
-      ): item is {
-        page: PageObjectResponse
-        entry: NonNullable<typeof item.entry>
-      } => item.entry !== null
+      (item): item is { page: PageObjectResponse; entry: NotionEntry } =>
+        item.entry !== null
     )
     .sort((a, b) => {
       const orderA = a.entry.order ?? Number.POSITIVE_INFINITY
@@ -213,13 +238,58 @@ export function buildNavData(
     .map(({ entry }) => entry)
 
   return {
-    categories: groupLinksByCategory(
-      getCategoryOptions(props.category),
-      entries
-    ),
-    total: entries.length,
-    source: "notion",
-    updatedAt: now.toISOString(),
+    data: {
+      categories: groupLinksByCategory(
+        getCategoryOptions(props.category),
+        entries
+      ),
+      total: entries.length,
+      source: "notion",
+      updatedAt: now.toISOString(),
+    },
+    hostedIconLinkIds: entries
+      .filter((entry) => entry.iconHosted && entry.link.icon)
+      .map((entry) => entry.link.id),
+  }
+}
+
+/**
+ * 把 Notion 上傳的圖示換成 build 時下載的本地檔案（Notion 檔案網址約 1 小時後失效）。
+ * `localize` 失敗會直接拋錯，讓 build 失敗並保留上一版網站。
+ */
+export async function localizeNotionIcons(
+  data: NavData,
+  hostedIconLinkIds: Iterable<string>,
+  localize: (url: string) => Promise<string>,
+  concurrency = 4
+): Promise<NavData> {
+  const hosted = new Set(hostedIconLinkIds)
+  const links = new Map<string, NavLink>()
+  for (const category of data.categories) {
+    for (const link of category.links) {
+      if (hosted.has(link.id) && link.icon) links.set(link.id, link)
+    }
+  }
+
+  const localized = new Map<string, string>()
+  const queue = [...links.values()]
+  const worker = async () => {
+    for (let link = queue.shift(); link; link = queue.shift()) {
+      localized.set(link.id, await localize(link.icon!))
+    }
+  }
+  await Promise.all(Array.from({ length: concurrency }, worker))
+
+  return {
+    ...data,
+    categories: data.categories.map((category) => ({
+      ...category,
+      links: category.links.map((link) =>
+        localized.has(link.id)
+          ? { ...link, icon: localized.get(link.id)! }
+          : link
+      ),
+    })),
   }
 }
 
@@ -266,7 +336,7 @@ export interface NotionConfig {
 export async function fetchNotionNavData({
   token,
   databaseId,
-}: NotionConfig): Promise<NavData> {
+}: NotionConfig): Promise<NotionNavResult> {
   const id = extractNotionId(databaseId)
   if (!id)
     throw new Error("NOTION_DATABASE_ID 格式不正確，請填入資料庫 ID 或網址")

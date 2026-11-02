@@ -4,7 +4,11 @@ import type {
 } from "@notionhq/client"
 import { describe, expect, it } from "vitest"
 
-import { buildNavData, resolveProperties } from "@/lib/notion"
+import {
+  buildNavData,
+  localizeNotionIcons,
+  resolveProperties,
+} from "@/lib/notion"
 
 // ---- 依 Notion API（2025-09-03）回傳格式建立測試資料 ----
 
@@ -150,8 +154,11 @@ describe("resolveProperties", () => {
 })
 
 describe("buildNavData", () => {
+  const build = (pages: PageObjectResponse[], schema = createSchema()) =>
+    buildNavData({ properties: schema }, pages)
+
   it("轉換截圖中的 Sass/SCSS 資料列", () => {
-    const data = buildNavData({ properties: createSchema() }, [
+    const { data } = build([
       createPage({
         name: "Sass/SCSS",
         desc: "一個成熟，穩定，功能強大的CSS 預處理器",
@@ -180,7 +187,7 @@ describe("buildNavData", () => {
   })
 
   it("分類依 Notion 選項順序、空分類移除、未分類放最後、多選會出現在多個分類", () => {
-    const data = buildNavData({ properties: createSchema() }, [
+    const { data } = build([
       createPage({ name: "無分類", link: "https://a.dev" }),
       createPage({ name: "Vite", types: ["🛠️ 開發工具"], link: "vite.dev" }),
       createPage({
@@ -203,23 +210,59 @@ describe("buildNavData", () => {
     expect(data.total).toBe(3)
   })
 
-  it("略過沒有標題或連結的資料列，並拒絕不安全的連結", () => {
-    const data = buildNavData({ properties: createSchema() }, [
-      createPage({ name: "沒有連結", types: ["CSS相關"] }),
+  it("沒有名字不顯示；沒有連結或連結無效仍顯示（url 為 null）；其他欄位空白沒關係", () => {
+    const { data } = build([
       createPage({ name: "", types: ["CSS相關"], link: "https://a.dev" }),
+      createPage({ name: "   ", types: ["CSS相關"], link: "https://b.dev" }),
+      createPage({ name: "沒有連結", types: ["CSS相關"] }),
       createPage({
         name: "XSS",
         types: ["CSS相關"],
         link: "javascript:alert(1)",
       }),
-      createPage({ name: "OK", types: ["CSS相關"], link: "https://ok.dev" }),
+      createPage({ name: "只有名字" }),
     ])
-    expect(data.total).toBe(1)
-    expect(data.categories[0].links[0].title).toBe("OK")
+
+    expect(data.total).toBe(3)
+    expect(data.categories.map((c) => c.name)).toEqual(["CSS相關", "未分類"])
+    expect(data.categories[0].links).toMatchObject([
+      { title: "沒有連結", url: null, hostname: "", description: "" },
+      { title: "XSS", url: null, hostname: "" },
+    ])
+    expect(data.categories[1].links[0]).toMatchObject({
+      title: "只有名字",
+      url: null,
+      description: "",
+      icon: null,
+      emoji: null,
+    })
+  })
+
+  it("缺少欄位時不報錯：只有標題欄位也能產生資料", () => {
+    const schema = createSchema() as Record<string, unknown>
+    for (const key of ["Desc", "Type", "icon link", "link"]) delete schema[key]
+
+    const { data } = build(
+      [
+        createPage({
+          name: "Sass",
+          desc: "x",
+          types: ["CSS相關"],
+          link: "a.dev",
+        }),
+      ],
+      schema as unknown as Schema
+    )
+    expect(data.categories.map((c) => c.name)).toEqual(["未分類"])
+    expect(data.categories[0].links[0]).toMatchObject({
+      title: "Sass",
+      description: "",
+      url: null,
+    })
   })
 
   it("icon 優先順序：icon link → 頁面圖片；emoji 只在沒有圖片時使用", () => {
-    const data = buildNavData({ properties: createSchema() }, [
+    const { data } = build([
       createPage({
         name: "有 icon link",
         types: ["CSS相關"],
@@ -246,6 +289,30 @@ describe("buildNavData", () => {
     expect(c).toMatchObject({ icon: null, emoji: "🚀" })
   })
 
+  it("標記 Notion 上傳（會過期）的圖示，外部網址不標記", () => {
+    const uploaded = createPage({
+      name: "上傳圖示",
+      types: ["CSS相關"],
+      link: "a.dev",
+      icon: {
+        type: "file",
+        file: {
+          url: "https://prod-files-secure.s3.us-west-2.amazonaws.com/x/icon.png?X-Amz-Signature=abc",
+          expiry_time: "2026-11-02T18:00:00.000Z",
+        },
+      },
+    })
+    const external = createPage({
+      name: "外部圖示",
+      types: ["CSS相關"],
+      link: "b.dev",
+      icon: { type: "external", external: { url: "https://b.dev/icon.png" } },
+    })
+
+    const { hostedIconLinkIds } = build([uploaded, external])
+    expect(hostedIconLinkIds).toEqual([uploaded.id])
+  })
+
   it("依建立時間排序；有 Sort 欄位時優先依數字排序", () => {
     const sortProp = {
       Sort: {
@@ -262,17 +329,14 @@ describe("buildNavData", () => {
       createPage({ name: "C", types: ["CSS相關"], link: "c.dev", sort: 1 }),
     ]
 
-    const byCreated = buildNavData({ properties: createSchema() }, pages)
+    const byCreated = build(pages).data
     expect(byCreated.categories[0].links.map((l) => l.title)).toEqual([
       "A",
       "B",
       "C",
     ])
 
-    const bySort = buildNavData(
-      { properties: createSchema("multi_select", sortProp) },
-      pages
-    )
+    const bySort = build(pages, createSchema("multi_select", sortProp)).data
     expect(bySort.categories[0].links.map((l) => l.title)).toEqual([
       "C",
       "A",
@@ -281,20 +345,85 @@ describe("buildNavData", () => {
   })
 
   it("支援單選（select）的分類欄位", () => {
-    const data = buildNavData({ properties: createSchema("select") }, [
-      createPage(
-        { name: "Vite", types: ["🛠️ 開發工具"], link: "vite.dev" },
-        "select"
-      ),
-    ])
+    const { data } = build(
+      [
+        createPage(
+          { name: "Vite", types: ["🛠️ 開發工具"], link: "vite.dev" },
+          "select"
+        ),
+      ],
+      createSchema("select")
+    )
     expect(data.categories.map((c) => c.name)).toEqual(["開發工具"])
   })
+})
 
-  it("找不到連結欄位時拋出錯誤", () => {
-    const schema = createSchema() as Record<string, unknown>
-    delete schema.link
-    expect(() =>
-      buildNavData({ properties: schema as unknown as Schema }, [])
-    ).toThrow(/找不到連結欄位/)
+describe("localizeNotionIcons", () => {
+  it("只替換 Notion 上傳的圖示，多個分類共用同一筆時只下載一次", async () => {
+    const hostedUrl =
+      "https://prod-files-secure.s3.us-west-2.amazonaws.com/x/icon.png?X-Amz-Signature=abc"
+    const uploaded = createPage({
+      name: "上傳圖示",
+      types: ["CSS相關", "🛠️ 開發工具"],
+      link: "a.dev",
+      icon: {
+        type: "file",
+        file: { url: hostedUrl, expiry_time: "2026-11-02T18:00:00.000Z" },
+      },
+    })
+    const external = createPage({
+      name: "外部圖示",
+      types: ["CSS相關"],
+      link: "b.dev",
+      icon: { type: "external", external: { url: "https://b.dev/icon.png" } },
+    })
+    const { data, hostedIconLinkIds } = buildNavData(
+      { properties: createSchema() },
+      [uploaded, external]
+    )
+
+    const downloaded: string[] = []
+    const result = await localizeNotionIcons(
+      data,
+      hostedIconLinkIds,
+      async (url) => {
+        downloaded.push(url)
+        return "/_astro/icon.webp"
+      }
+    )
+
+    expect(downloaded).toEqual([hostedUrl])
+    const icons = result.categories.flatMap((c) =>
+      c.links.map((l) => [l.title, l.icon])
+    )
+    expect(icons).toEqual([
+      ["上傳圖示", "/_astro/icon.webp"],
+      ["外部圖示", "https://b.dev/icon.png"],
+      ["上傳圖示", "/_astro/icon.webp"],
+    ])
+  })
+
+  it("下載失敗時拋出錯誤（讓 build 失敗）", async () => {
+    const page = createPage({
+      name: "上傳圖示",
+      types: ["CSS相關"],
+      link: "a.dev",
+      icon: {
+        type: "file",
+        file: {
+          url: "https://prod-files-secure.s3.us-west-2.amazonaws.com/x.png",
+          expiry_time: "2026-11-02T18:00:00.000Z",
+        },
+      },
+    })
+    const { data, hostedIconLinkIds } = buildNavData(
+      { properties: createSchema() },
+      [page]
+    )
+    await expect(
+      localizeNotionIcons(data, hostedIconLinkIds, async () => {
+        throw new Error("download failed")
+      })
+    ).rejects.toThrow("download failed")
   })
 })

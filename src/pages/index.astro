@@ -1,30 +1,11 @@
 ---
-import { CACHE_MAX_AGE } from "astro:env/server"
-
 import Layout from "@/layouts/main.astro"
 import { NavApp } from "@/components/nav/nav-app"
-import { NOTION_CACHE_TAG } from "@/config/site"
 import { getNavData } from "@/lib/nav-data"
 
-// 每次請求於伺服器端讀取 Notion，並透過 Astro route cache 快取結果：
-// - CACHE_MAX_AGE 秒內直接回傳快取
-// - 過期後先回傳舊內容、背景重新抓取（stale-while-revalidate）
-// - /api/revalidate 被呼叫（例如 Notion webhook）時立即清除
-export const prerender = false
-
+// SSG：在 build 時讀取 Notion 並產生靜態 HTML。
+// Notion 有修改時，由 Notion webhook → GitHub Actions（等 10 分鐘）→ Cloudflare 重新 build。
 const data = await getNavData()
-
-if (data.error) {
-  // 讀取失敗不要快取，下一個請求會重新嘗試
-  Astro.response.status = 503
-  Astro.cache.set(false)
-} else if (CACHE_MAX_AGE > 0) {
-  Astro.cache.set({
-    maxAge: CACHE_MAX_AGE,
-    swr: 60 * 60 * 24,
-    tags: [NOTION_CACHE_TAG],
-  })
-}
 ---
 
 <Layout>

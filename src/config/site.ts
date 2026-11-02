@@ -18,9 +18,6 @@ export const siteConfig = {
   faviconService: "https://www.google.com/s2/favicons?domain={hostname}&sz=64",
 } as const
 
-/** Notion 相關的頁面快取都掛在這個 tag 上，revalidate 時一次清除 */
-export const NOTION_CACHE_TAG = "notion"
-
 /**
  * Notion 資料庫欄位對應（不分大小寫）。
  * 預設對應你目前資料庫的欄位：Name(標題) / Desc / Type / icon link / link，

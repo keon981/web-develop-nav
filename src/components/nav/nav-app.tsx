@@ -74,7 +74,7 @@ export function NavApp({ data }: { data: NavData }) {
               <CategorySection key={category.id} category={category} />
             ))}
 
-            {categories.length === 0 && !data.error && (
+            {categories.length === 0 && (
               <Empty className="flex-none border border-dashed py-16">
                 <EmptyHeader>
                   <EmptyMedia variant="icon">
