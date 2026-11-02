@@ -1,13 +1,52 @@
 ---
 import "@/styles/global.css"
+import { siteConfig } from "@/config/site"
+
+interface Props {
+  title?: string
+  description?: string
+}
+
+const { title = siteConfig.name, description = siteConfig.description } =
+  Astro.props
 ---
 
-<html lang="en">
+<!doctype html>
+<html lang="zh-Hant-TW">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta
+      name="theme-color"
+      content="#ffffff"
+      media="(prefers-color-scheme: light)"
+    />
+    <meta
+      name="theme-color"
+      content="#141619"
+      media="(prefers-color-scheme: dark)"
+    />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Astro App</title>
+    <title>{title}</title>
+    <!-- 在畫面繪製前套用主題，避免深色模式閃白（與 hooks/use-theme.ts 共用 localStorage key） -->
+    <script is:inline>
+      ;(() => {
+        let theme = "system"
+        try {
+          theme = localStorage.getItem("theme") || "system"
+        } catch {}
+        const dark =
+          theme === "dark" ||
+          (theme !== "light" &&
+            window.matchMedia("(prefers-color-scheme: dark)").matches)
+        document.documentElement.classList.toggle("dark", dark)
+        document.documentElement.style.colorScheme = dark ? "dark" : "light"
+      })()
+    </script>
   </head>
   <body>
     <slot />
