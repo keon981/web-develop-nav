@@ -1,17 +1,13 @@
 ---
 import Layout from "@/layouts/main.astro"
-import { Button } from "@/components/ui/button"
+import { NavApp } from "@/components/nav/nav-app"
+import { getNavData } from "@/lib/nav-data"
+
+// SSG：在 build 時讀取 Notion 並產生靜態 HTML。
+// Notion 有修改時，由 Notion webhook → GitHub Actions（等 10 分鐘）→ Cloudflare 重新 build。
+const data = await getNavData()
 ---
 
 <Layout>
-  <div class="flex min-h-svh p-6">
-    <div class="flex max-w-md min-w-0 flex-col gap-4 text-sm leading-loose">
-      <div>
-        <h1 class="font-medium">Project ready!</h1>
-        <p>You may now add components and start building.</p>
-        <p>We've already added the button component for you.</p>
-        <Button client:load className="mt-2">Button</Button>
-      </div>
-    </div>
-  </div>
+  <NavApp client:load data={data} />
 </Layout>

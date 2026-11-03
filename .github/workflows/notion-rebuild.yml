@@ -1,0 +1,31 @@
+name: Notion rebuild
+
+# 由 Cloudflare Pages Function（/api/notion-webhook）在 Notion 有修改時觸發。
+# 先等 10 分鐘；等待期間又收到新通知，GitHub 會取消這次並重新開始等（重新計時），
+# 連續 10 分鐘都沒有新通知，才呼叫 Cloudflare Pages 的 deploy hook 重新 build。
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: notion-rebuild
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  rebuild:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Wait 10 minutes for more Notion changes
+        run: sleep 600
+
+      - name: Trigger Cloudflare Pages build
+        env:
+          DEPLOY_HOOK_URL: ${{ secrets.CLOUDFLARE_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$DEPLOY_HOOK_URL" ]; then
+            echo "::error::缺少 repository secret CLOUDFLARE_DEPLOY_HOOK_URL"
+            exit 1
+          fi
+          curl --fail --silent --show-error --request POST "$DEPLOY_HOOK_URL"
