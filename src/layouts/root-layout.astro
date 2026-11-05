@@ -1,0 +1,57 @@
+---
+import "@/styles/global.css"
+import { siteConfig } from "@/configs/site"
+
+interface Props {
+  title?: string
+  description?: string
+}
+
+const { title = siteConfig.name, description = siteConfig.description } =
+  Astro.props
+---
+
+<script is:inline>
+  const getThemePreference = () => {
+    if (typeof localStorage !== "undefined" && localStorage.getItem("theme")) {
+      return localStorage.getItem("theme")
+    }
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light"
+  }
+  const isDark = getThemePreference() === "dark"
+  document.documentElement.classList[isDark ? "add" : "remove"]("dark")
+
+  if (typeof localStorage !== "undefined") {
+    const observer = new MutationObserver(() => {
+      const isDark = document.documentElement.classList.contains("dark")
+      localStorage.setItem("theme", isDark ? "dark" : "light")
+    })
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class"],
+    })
+  }
+</script>
+
+<html lang="zh-TW">
+  <head>
+    <!-- meta -->
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+
+    <!-- link -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- title -->
+    <title>{title}</title>
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
